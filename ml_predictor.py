@@ -18,16 +18,18 @@ warnings.filterwarnings('ignore')
 class MLStockPredictor:
     """ML-based stock price prediction for swing trading and investing"""
     
-    def __init__(self, data, holding_style='swing'):
+    def __init__(self, data, holding_style='swing', news_sentiment=None):
         """
         Initialize ML predictor
         
         Args:
             data (pd.DataFrame): Historical OHLCV data
             holding_style (str): 'swing' (2-10 days) or 'invest' (months)
+            news_sentiment (dict): Sentiment analysis results
         """
         self.data = data.copy()
         self.holding_style = holding_style
+        self.news_sentiment = news_sentiment or {'sentiment_score': 0}
         self.scaler = StandardScaler()
         
         # Set prediction horizon based on style
@@ -41,6 +43,9 @@ class MLStockPredictor:
     def create_features(self):
         """Create technical features for ML models"""
         df = self.data.copy()
+
+        # Add sentiment score as a feature
+        df['News_Sentiment'] = self.news_sentiment.get('sentiment_score', 0)
         
         # Price-based features
         df['Returns'] = df['Close'].pct_change()
@@ -90,6 +95,88 @@ class MLStockPredictor:
         # Price position
         df['High_Low_Ratio'] = df['High'] / df['Low']
         df['Close_Open_Ratio'] = df['Close'] / df['Open']
+
+        # Newly added
+        df['Returns'] = df['Close'].pct_change()
+        df['Log_Returns'] = np.log(df['Close'] / df['Close'].shift(1))
+
+        # 1. ADX (Average Directional Index) - Trend Strength
+        high_low = df['High'] - df['Low']
+        high_close = abs(df['High'] - df['Close'].shift())
+        low_close = abs(df['Low'] - df['Close'].shift())
+        tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+        df['ATR'] = tr.rolling(window=14).mean()  # Average True Range
+
+        # 2. Stochastic Oscillator
+        low_14 = df['Low'].rolling(window=14).min()
+        high_14 = df['High'].rolling(window=14).max()
+        df['Stochastic_K'] = 100 * ((df['Close'] - low_14) / (high_14 - low_14))
+        df['Stochastic_D'] = df['Stochastic_K'].rolling(window=3).mean()
+
+        # 3. Williams %R
+        df['Williams_R'] = -100 * ((high_14 - df['Close']) / (high_14 - low_14))
+
+        # 4. Rate of Change (ROC)
+        df['ROC_5'] = ((df['Close'] - df['Close'].shift(5)) / df['Close'].shift(5)) * 100
+        df['ROC_10'] = ((df['Close'] - df['Close'].shift(10)) / df['Close'].shift(10)) * 100
+
+        # 5. Money Flow Index (MFI) - Volume-weighted RSI
+        typical_price = (df['High'] + df['Low'] + df['Close']) / 3
+        money_flow = typical_price * df['Volume']
+        
+        positive_flow = money_flow.where(typical_price > typical_price.shift(1), 0)
+        negative_flow = money_flow.where(typical_price < typical_price.shift(1), 0)
+        
+        positive_mf = positive_flow.rolling(window=14).sum()
+        negative_mf = negative_flow.rolling(window=14).sum()
+        
+        mfi_ratio = positive_mf / negative_mf
+        df['MFI'] = 100 - (100 / (1 + mfi_ratio))
+        
+        # 6. On-Balance Volume (OBV)
+        df['OBV'] = (df['Volume'] * (~df['Close'].diff().le(0) * 2 - 1)).cumsum()
+        df['OBV_MA'] = df['OBV'].rolling(window=20).mean()
+        
+        # 7. VWAP (Volume Weighted Average Price)
+        df['VWAP'] = (df['Volume'] * (df['High'] + df['Low'] + df['Close']) / 3).cumsum() / df['Volume'].cumsum()
+        df['VWAP_Ratio'] = df['Close'] / df['VWAP']
+        
+        # 8. Ichimoku Cloud components
+        nine_period_high = df['High'].rolling(window=9).max()
+        nine_period_low = df['Low'].rolling(window=9).min()
+        df['Tenkan_sen'] = (nine_period_high + nine_period_low) / 2
+        
+        period26_high = df['High'].rolling(window=26).max()
+        period26_low = df['Low'].rolling(window=26).min()
+        df['Kijun_sen'] = (period26_high + period26_low) / 2
+        
+        df['Senkou_Span_A'] = ((df['Tenkan_sen'] + df['Kijun_sen']) / 2).shift(26)
+        
+        # 9. Price Distance from Moving Averages
+        df['Distance_SMA20'] = ((df['Close'] - df['SMA_20']) / df['SMA_20']) * 100
+        df['Distance_SMA50'] = ((df['Close'] - df['SMA_50']) / df['SMA_50']) * 100
+        
+        # 10. Candlestick Patterns (simplified)
+        df['Body_Size'] = abs(df['Close'] - df['Open'])
+        df['Upper_Shadow'] = df['High'] - df[['Close', 'Open']].max(axis=1)
+        df['Lower_Shadow'] = df[['Close', 'Open']].min(axis=1) - df['Low']
+        df['Is_Doji'] = (df['Body_Size'] < (df['High'] - df['Low']) * 0.1).astype(int)
+        
+        # 11. Gap Analysis
+        df['Gap'] = df['Open'] - df['Close'].shift(1)
+        df['Gap_Percent'] = (df['Gap'] / df['Close'].shift(1)) * 100
+        
+        # 12. Volume Trends
+        df['Volume_5D_Avg'] = df['Volume'].rolling(window=5).mean()
+        df['Volume_20D_Avg'] = df['Volume'].rolling(window=20).mean()
+        df['Volume_Trend'] = df['Volume_5D_Avg'] / df['Volume_20D_Avg']
+        
+        # 13. Price Acceleration
+        df['Price_Acceleration'] = df['Returns'].diff()
+        
+        # 14. Volatility Ratio
+        df['High_Low_Range'] = ((df['High'] - df['Low']) / df['Close']) * 100
+        df['Volatility_Ratio'] = df['Volatility'] / df['Volatility'].rolling(window=50).mean()  
         
         # Target variable
         df['Target'] = (df['Close'].shift(-self.prediction_days) > df['Close']).astype(int)
@@ -321,6 +408,114 @@ class MLStockPredictor:
         except Exception as e:
             print(f"✗ Prophet error: {str(e)}")
             return None
+
+    def train_gradient_boosting(self):
+        """Train Gradient Boosting Classifier"""
+        print(f"Training Gradient Boosting for {self.prediction_days}-day prediction...")
+        
+        try:
+            from sklearn.ensemble import GradientBoostingClassifier
+            
+            features_df = self.create_features()
+            
+            feature_columns = ['Returns', 'SMA_20', 'RSI', 'MACD', 'BB_Position',
+                              'Volume_Ratio', 'MFI', 'Stochastic_K', 'Williams_R',
+                              'ROC_10', 'VWAP_Ratio', 'Distance_SMA20']
+            
+            X = features_df[feature_columns].values
+            y = features_df['Target'].values
+            
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, test_size=0.2, shuffle=False
+            )
+            
+            model = GradientBoostingClassifier(
+                n_estimators=150,
+                learning_rate=0.1,
+                max_depth=4,
+                random_state=42
+            )
+            
+            model.fit(X_train, y_train)
+            
+            last_features = X[-1:, :]
+            prediction_proba = model.predict_proba(last_features)[0]
+            prediction = model.predict(last_features)[0]
+            
+            accuracy = model.score(X_test, y_test)
+            current_price = float(self.data['Close'].iloc[-1])
+            
+            return {
+                'model': 'Gradient Boosting',
+                'signal': 'BUY' if prediction == 1 else 'SELL',
+                'probability_up': float(prediction_proba[1]),
+                'probability_down': float(prediction_proba[0]),
+                'confidence': float(max(prediction_proba)),
+                'accuracy': float(accuracy),
+                'days_ahead': int(self.prediction_days),
+                'current_price': current_price,
+                'holding_style': self.holding_style,
+                'type': 'signal'
+            }
+        except Exception as e:
+            print(f"✗ Gradient Boosting error: {str(e)}")
+            return None
+
+    def train_svm(self):
+        """Train Support Vector Machine"""
+        print(f"Training SVM for {self.prediction_days}-day prediction...")
+        
+        try:
+            from sklearn.svm import SVC
+            from sklearn.preprocessing import StandardScaler
+            
+            features_df = self.create_features()
+            
+            feature_columns = ['Returns', 'RSI', 'MACD', 'Stochastic_K',
+                              'MFI', 'Volume_Ratio', 'Distance_SMA20', 'ATR']
+            
+            X = features_df[feature_columns].values
+            y = features_df['Target'].values
+            
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, test_size=0.2, shuffle=False
+            )
+            
+            scaler = StandardScaler()
+            X_train_scaled = scaler.fit_transform(X_train)
+            X_test_scaled = scaler.transform(X_test)
+            
+            model = SVC(
+                kernel='rbf',
+                C=1.0,
+                probability=True,
+                random_state=42
+            )
+            
+            model.fit(X_train_scaled, y_train)
+            
+            last_features = scaler.transform(X[-1:, :])
+            prediction_proba = model.predict_proba(last_features)[0]
+            prediction = model.predict(last_features)[0]
+            
+            accuracy = model.score(X_test_scaled, y_test)
+            current_price = float(self.data['Close'].iloc[-1])
+            
+            return {
+                'model': 'SVM',
+                'signal': 'BUY' if prediction == 1 else 'SELL',
+                'probability_up': float(prediction_proba[1]),
+                'probability_down': float(prediction_proba[0]),
+                'confidence': float(max(prediction_proba)),
+                'accuracy': float(accuracy),
+                'days_ahead': int(self.prediction_days),
+                'current_price': current_price,
+                'holding_style': self.holding_style,
+                'type': 'signal'
+            }
+        except Exception as e:
+            print(f"✗ SVM error: {str(e)}")
+            return None    
     
     def ensemble_prediction(self):
         """Combine all models for ensemble prediction"""
@@ -355,6 +550,24 @@ class MLStockPredictor:
                       f"(confidence: {rf_pred['confidence']*100:.1f}%)")
         except Exception as e:
             print(f"✗ Random Forest failed: {str(e)}")
+
+        try:
+            gb_pred = self.train_gradient_boosting()
+            if gb_pred:
+                predictions['gradient_boosting'] = gb_pred
+                print(f"✓ Gradient Boosting: {gb_pred['signal']} "
+                      f"(confidence: {gb_pred['confidence']*100:.1f}%)")
+        except Exception as e:
+            print(f"✗ Gradient Boosting failed: {str(e)}")
+    
+        try:
+            svm_pred = self.train_svm()
+            if svm_pred:
+                predictions['svm'] = svm_pred
+                print(f"✓ SVM: {svm_pred['signal']} "
+                      f"(confidence: {svm_pred['confidence']*100:.1f}%)")
+        except Exception as e:
+            print(f"✗ SVM failed: {str(e)}")
         
         if self.holding_style == 'invest':
             try:
@@ -371,6 +584,7 @@ class MLStockPredictor:
         print("=" * 60)
         print(f"🎯 Ensemble Recommendation: {ensemble['recommendation']}")
         print(f"📊 Confidence: {ensemble['confidence']:.1f}%")
+        print(f"🗳️ Votes: BUY={ensemble['buy_votes']}, SELL={ensemble['sell_votes']}, HOLD={ensemble['hold_votes']}")
         print("=" * 60 + "\n")
         
         return {
