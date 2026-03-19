@@ -1,0 +1,19 @@
+## 📦 Updated `requirements.txt`
+```
+yfinance
+pandas
+numpy
+streamlit
+matplotlib
+requests
+plotly
+scikit-learn
+xgboost
+tensorflow
+prophet
+ta
+joblib
+feedparser
+beautifulsoup4
+newsapi-python
+textblob
