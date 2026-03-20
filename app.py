@@ -140,14 +140,14 @@ with main_tab1:
                         else:
                             st.error("❌ Analysis returned no results")
                         
-                    except Exception as e:
-                        st.error(f"❌ Error: {str(e)}")
-                        st.error(f"❌ Error during analysis: {str(e)}")
-                        st.error(f"Error type: {type(e).__name__}")
-            
-                        # Show full traceback for debugging
-                        import traceback
-                        st.code(traceback.format_exc())
+                except Exception as e:
+                    st.error(f"❌ Error: {str(e)}")
+                    st.error(f"❌ Error during analysis: {str(e)}")
+                    st.error(f"Error type: {type(e).__name__}")
+        
+                    # Show full traceback for debugging
+                    import traceback
+                    st.code(traceback.format_exc())
         
         results = st.session_state.analysis_results
         analyzer = st.session_state.analyzer
