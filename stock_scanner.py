@@ -22,7 +22,7 @@ class StockScanner:
         """
         self.holding_term = holding_term
         self.exchange = exchange
-        self.news_fetcher = IndianMarketNewsFetcher()
+        self.news_fetcher = NewsFetcher()
         self.ml_db = MLDatabase()
         self.results = []
     
