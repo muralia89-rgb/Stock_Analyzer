@@ -31,39 +31,30 @@ class StockDataFetcher:
             try:
                 print(f"Attempt {attempt + 1}/{self.max_retries}: Fetching {self.ticker_symbol}...")
                 
-                # Create ticker with custom session
-                import requests
-                session = requests.Session()
-                session.headers.update({
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                    'Accept-Language': 'en-US,en;q=0.5',
-                    'Accept-Encoding': 'gzip, deflate',
-                    'Connection': 'keep-alive',
-                })
+                # Let yfinance handle the session (don't pass custom session)
+                self.ticker = yf.Ticker(self.ticker_symbol)
                 
-                self.ticker = yf.Ticker(self.ticker_symbol, session=session)
-                
-                # Try to get basic info with timeout
+                # Try to get basic data to verify ticker works
                 # Use fast_info instead of info to avoid rate limits
                 try:
-                    self.stock_info = self.ticker.fast_info
-                    print(f"✓ Successfully fetched data for {self.ticker_symbol}")
-                    break
-                except:
-                    # Fallback to basic history check
+                    # Test with a quick history check
                     test_data = self.ticker.history(period='5d')
                     if len(test_data) > 0:
                         print(f"✓ Successfully fetched data for {self.ticker_symbol}")
                         break
                     else:
                         raise ValueError("No data available")
+                except:
+                    # If history fails, try fast_info
+                    self.stock_info = self.ticker.fast_info
+                    print(f"✓ Successfully fetched data for {self.ticker_symbol}")
+                    break
                 
             except Exception as e:
                 error_msg = str(e)
                 print(f"❌ Attempt {attempt + 1} failed: {error_msg}")
                 
-                if "Rate limited" in error_msg or "Too Many Requests" in error_msg:
+                if "Rate limited" in error_msg or "Too Many Requests" in error_msg or "429" in error_msg:
                     # Exponential backoff for rate limiting
                     wait_time = (2 ** attempt) + 1  # 2, 3, 5, 9, 17 seconds
                     print(f"⏳ Rate limited. Waiting {wait_time} seconds...")
@@ -91,31 +82,46 @@ class StockDataFetcher:
     def is_valid(self):
         """Check if stock ticker is valid"""
         try:
-            # Just check if ticker exists
             return self.ticker is not None
         except:
             return False
     
     def get_current_price(self):
-        """Get current stock price"""
+        """Get current stock price with retry logic"""
         try:
-            # Try fast_info first (no rate limit)
-            if self.stock_info and hasattr(self.stock_info, 'last_price'):
-                return self.stock_info.last_price
+            # Try fast_info first (lightweight, less likely to be rate limited)
+            if hasattr(self.ticker, 'fast_info'):
+                try:
+                    return float(self.ticker.fast_info['lastPrice'])
+                except:
+                    pass
             
             # Fallback to recent history
-            hist = self.ticker.history(period='1d')
-            if not hist.empty:
-                return hist['Close'].iloc[-1]
+            for attempt in range(3):
+                try:
+                    hist = self.ticker.history(period='1d')
+                    if not hist.empty:
+                        return float(hist['Close'].iloc[-1])
+                except Exception as e:
+                    if "Rate limited" in str(e) or "429" in str(e):
+                        if attempt < 2:
+                            wait_time = 2 ** attempt
+                            print(f"Rate limited getting price. Waiting {wait_time}s...")
+                            time.sleep(wait_time)
+                        else:
+                            raise
+                    else:
+                        raise
             
             return None
+            
         except Exception as e:
             print(f"Error getting current price: {e}")
             return None
     
     def get_historical_data(self, period='1y'):
         """
-        Get historical OHLCV data
+        Get historical OHLCV data with retry logic
         
         Args:
             period (str): Data period ('1mo', '3mo', '6mo', '1y', '2y', 'max')
@@ -135,7 +141,7 @@ class StockDataFetcher:
                     return data
                     
                 except Exception as e:
-                    if "Rate limited" in str(e) and attempt < 2:
+                    if ("Rate limited" in str(e) or "429" in str(e)) and attempt < 2:
                         wait_time = (2 ** attempt) + 1
                         print(f"Rate limited getting history. Waiting {wait_time}s...")
                         time.sleep(wait_time)
@@ -147,13 +153,13 @@ class StockDataFetcher:
             raise
     
     def get_fundamentals(self):
-        """Get fundamental data (may be limited due to rate limiting)"""
+        """Get fundamental data with fallback for rate limiting"""
+        fundamentals = {}
+        
         try:
-            fundamentals = {}
-            
-            # Try to get basic info without triggering rate limit
-            try:
-                if hasattr(self.ticker, 'info'):
+            # Try to get info (may be rate limited)
+            for attempt in range(2):
+                try:
                     info = self.ticker.info
                     
                     fundamentals['pe_ratio'] = info.get('trailingPE')
@@ -169,37 +175,58 @@ class StockDataFetcher:
                     fundamentals['dividend_yield'] = info.get('dividendYield')
                     fundamentals['sector'] = info.get('sector')
                     fundamentals['industry'] = info.get('industry')
-            except:
-                print("⚠️ Could not fetch fundamental data (rate limited)")
-                pass
-            
-            return fundamentals
-            
-        except Exception as e:
-            print(f"Error fetching fundamentals: {e}")
-            return {}
+                    
+                    break
+                    
+                except Exception as e:
+                    if ("Rate limited" in str(e) or "429" in str(e)) and attempt < 1:
+                        print(f"⚠️ Rate limited fetching fundamentals. Waiting 3s...")
+                        time.sleep(3)
+                    else:
+                        print(f"⚠️ Could not fetch fundamental data: {str(e)}")
+                        # Return partial data from history instead
+                        try:
+                            hist = self.ticker.history(period='1y')
+                            if not hist.empty:
+                                fundamentals['market_cap'] = None
+                                fundamentals['sector'] = 'Unknown'
+                        except:
+                            pass
+                        break
+        except:
+            print("⚠️ Fundamentals not available")
+            pass
+        
+        return fundamentals
     
     def get_company_info(self):
-        """Get company information"""
+        """Get company information with fallback"""
+        info = {
+            'name': self.symbol,
+            'sector': 'Unknown',
+            'industry': 'Unknown',
+            'website': '',
+            'description': ''
+        }
+        
         try:
-            info = {}
-            
-            try:
-                if hasattr(self.ticker, 'info'):
+            for attempt in range(2):
+                try:
                     ticker_info = self.ticker.info
                     info['name'] = ticker_info.get('longName', self.symbol)
                     info['sector'] = ticker_info.get('sector', 'Unknown')
                     info['industry'] = ticker_info.get('industry', 'Unknown')
                     info['website'] = ticker_info.get('website', '')
                     info['description'] = ticker_info.get('longBusinessSummary', '')
-            except:
-                # Fallback to basic info
-                info['name'] = self.symbol
-                info['sector'] = 'Unknown'
-                info['industry'] = 'Unknown'
-            
-            return info
-            
-        except Exception as e:
-            print(f"Error fetching company info: {e}")
-            return {'name': self.symbol, 'sector': 'Unknown', 'industry': 'Unknown'}
+                    break
+                except Exception as e:
+                    if ("Rate limited" in str(e) or "429" in str(e)) and attempt < 1:
+                        print(f"⚠️ Rate limited fetching company info. Waiting 2s...")
+                        time.sleep(2)
+                    else:
+                        print(f"⚠️ Using default company info")
+                        break
+        except:
+            pass
+        
+        return info
