@@ -1,7 +1,9 @@
+streamlit==1.32.2
+altair<=5.0.0,>=4.0.0
+protobuf<=5
 yfinance
 pandas
 numpy
-streamlit
 matplotlib
 requests
 plotly
@@ -14,8 +16,6 @@ feedparser
 beautifulsoup4
 lxml
 setuptools
-protobuf
 html5lib
 newsapi-python
 textblob
-altair>=5.0.0
