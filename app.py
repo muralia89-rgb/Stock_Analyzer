@@ -481,8 +481,9 @@ with main_tab2:
         
         st.markdown("---")
         st.subheader("📰 Recent News & Sentiment")
+        results = st.session_state.analysis_results
             
-        if 'news' in results and results['news']['articles']:
+        if results and 'news' in results and results['news']['articles']:
             news_summary = results['news']['summary']
             
             # Show news summary metrics
