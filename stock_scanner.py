@@ -5,7 +5,7 @@ Scans multiple stocks and recommends BUY/SELL based on comprehensive analysis
 import pandas as pd
 from datetime import datetime
 from main import StockAnalyzer
-from news_fetcher import IndianMarketNewsFetcher
+from news_fetcher import NewsFetcher
 from ml_database import MLDatabase
 import time
 
