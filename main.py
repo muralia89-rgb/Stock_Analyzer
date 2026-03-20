@@ -42,13 +42,22 @@ class StockAnalyzer:
             
             # Validate stock exists
             if not self.fetcher.is_valid():
-                raise ValueError(f"Invalid or non-existent stock symbol: {self.symbol}")
+                print(f"❌ Invalid or non-existent stock symbol: {self.symbol}")
+                return False
             
-            print("✓ Data fetched successfully")
+            # Try to get current price
+            price = self.fetcher.get_current_price()
+            if not price:
+                print("❌ Could not fetch current price")
+                return False
+            
+            print(f"✓ Data fetched successfully - Price: {price}")
             return True
             
         except Exception as e:
-            print(f"✗ Error fetching data: {str(e)}")
+            print(f"❌ Error fetching data: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return False
     
     def perform_technical_analysis(self):
@@ -179,11 +188,9 @@ class StockAnalyzer:
     
     def analyze(self):
         """
-        Run complete analysis
+        Run complete analysis"""
+        import traceback
         
-        Returns:
-            dict: Complete analysis results
-        """
         print(f"\n{'='*60}")
         print(f"  STOCK ANALYSIS: {self.symbol} ({self.exchange})")
         print(f"  Holding Term: {self.holding_term.upper()}")
