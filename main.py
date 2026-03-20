@@ -113,6 +113,56 @@ class StockAnalyzer:
         except Exception as e:
             print(f"✗ Error in fundamental analysis: {str(e)}")
             return False
+        
+    def fetch_news(self):
+        """Fetch stock-specific news"""
+        print("\n📰 Fetching news...")
+        
+        try:
+            from news_fetcher import NewsFetcher
+            
+            news_fetcher = NewsFetcher()
+            
+            # Get company info for better news search
+            company_info = self.fetcher.get_company_info()
+            company_name = company_info.get('name', self.symbol)
+            sector = company_info.get('sector', 'Unknown')
+            
+            # Determine timeframe based on holding term
+            if self.holding_term == 'week':
+                timeframe = 'week'
+            elif self.holding_term == 'month':
+                timeframe = 'month'
+            else:
+                timeframe = 'long'
+            
+            # Fetch stock-specific news
+            news = news_fetcher.fetch_stock_news(
+                symbol=self.symbol,
+                company_name=company_name,
+                sector=sector,
+                timeframe=timeframe
+            )
+            
+            # Get news summary
+            summary = news_fetcher.get_news_summary(news)
+            
+            print(f"✓ Found {summary['total_articles']} articles:")
+            print(f"  - Stock-specific: {summary['stock_specific']}")
+            print(f"  - Sector-related: {summary['sector_related']}")
+            print(f"  - General market: {summary['general_market']}")
+            
+            return {
+                'articles': news,
+                'summary': summary
+            }
+            
+        except Exception as e:
+            print(f"⚠️ News fetch failed: {e}")
+            return {
+                'articles': [],
+                'summary': {'total_articles': 0, 'stock_specific': 0, 'sector_related': 0, 'general_market': 0}
+            }
     
     def perform_ml_prediction(self):
         """Perform ML-based prediction with continuous learning"""
@@ -207,11 +257,14 @@ class StockAnalyzer:
         # Step 3: Fundamental analysis
         if not self.perform_fundamental_analysis():
             return None
+
+        # Step 4: Fetch news (NEW!)
+        news_data = self.fetch_news()
         
-        # Step 4: ML Prediction with continuous learning
+        # Step 5: ML Prediction with continuous learning
         ml_prediction = self.perform_ml_prediction()
         
-        # Step 5: Apply rules and make decision
+        # Step 6: Apply rules and make decision
         if not self.apply_rules():
             return None
         
@@ -226,7 +279,8 @@ class StockAnalyzer:
             'technical_signals': self.technical_signals,
             'fundamental_signals': self.fundamental_signals,
             'company_info': self.fetcher.get_company_info(),
-            'ml_prediction': ml_prediction
+            'ml_prediction': ml_prediction,
+            'news': news_data
         }
         
         return results

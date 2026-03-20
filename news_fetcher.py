@@ -1,432 +1,413 @@
 """
-News fetcher for Indian stock market - Smart Priority System
-Fetches news in order: Stock-specific → Peer → Sector → Global
-Filters by timeframe based on holding period
+News fetching module for stock-specific news
 """
 import requests
 from bs4 import BeautifulSoup
 import feedparser
 from datetime import datetime, timedelta
-import pandas as pd
 import time
-import re
 
-class IndianMarketNewsFetcher:
-    """Fetches real-time news from Indian financial sources with smart priority"""
+class NewsFetcher:
+    """Fetch stock-specific news from multiple sources"""
     
     def __init__(self):
-        self.sources = {
-            'moneycontrol': 'https://www.moneycontrol.com/rss/latestnews.xml',
-            'economic_times': 'https://economictimes.indiatimes.com/rssfeedstopstories.cms',
-            'business_standard': 'https://www.business-standard.com/rss/latest.rss',
-            'livemint': 'https://www.livemint.com/rss/markets'
-        }
-        
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
-        
-        # Peer companies mapping (for peer news)
-        self.peer_mapping = {
-            'IOC': ['BPCL', 'HPCL', 'Reliance', 'oil', 'petroleum', 'refinery'],
-            'RELIANCE': ['IOC', 'BPCL', 'HPCL', 'petrochemical', 'energy'],
-            'TCS': ['Infosys', 'Wipro', 'HCL Tech', 'Tech Mahindra', 'IT services'],
-            'INFY': ['TCS', 'Wipro', 'HCL Tech', 'Tech Mahindra', 'IT services'],
-            'HDFCBANK': ['ICICI Bank', 'Axis Bank', 'Kotak', 'SBI', 'banking'],
-            'ICICIBANK': ['HDFC Bank', 'Axis Bank', 'Kotak', 'SBI', 'banking'],
-            'TATAMOTORS': ['Maruti', 'Mahindra', 'Hyundai', 'automobile', 'auto'],
-            'MARUTI': ['Tata Motors', 'Mahindra', 'Hyundai', 'automobile', 'auto'],
-        }
-        
-        # Sector keywords
-        self.sector_keywords = {
-            'Technology': ['tech', 'IT', 'software', 'digital', 'cloud', 'AI'],
-            'Financials': ['bank', 'finance', 'lending', 'NBFC', 'insurance'],
-            'Financial Services': ['bank', 'finance', 'lending', 'NBFC', 'insurance'],
-            'Healthcare': ['pharma', 'health', 'drug', 'medicine', 'hospital', 'vaccine'],
-            'Energy': ['oil', 'gas', 'power', 'energy', 'petroleum', 'renewable'],
-            'Consumer Defensive': ['FMCG', 'consumer goods', 'retail', 'food'],
-            'Consumer Cyclical': ['auto', 'automobile', 'car', 'consumer durables'],
-            'Basic Materials': ['steel', 'metal', 'cement', 'mining', 'commodity'],
-            'Industrials': ['manufacturing', 'industrial', 'infrastructure', 'construction'],
-            'Communication Services': ['telecom', 'telecommunication', 'communication'],
-            'Utilities': ['power', 'electricity', 'utility', 'gas distribution']
-        }
-        
-        # Global news keywords
-        self.global_keywords = ['Fed', 'Federal Reserve', 'China', 'US market', 'crude oil', 
-                               'gold', 'dollar', 'global', 'international', 'world economy',
-                               'trade war', 'inflation', 'interest rate', 'recession']
     
-    def parse_news_date(self, date_str):
-        """Parse news date and return datetime object"""
-        try:
-            # Handle various date formats
-            if 'ago' in date_str.lower():
-                # "2 hours ago", "1 day ago"
-                if 'hour' in date_str:
-                    hours = int(re.search(r'\d+', date_str).group())
-                    return datetime.now() - timedelta(hours=hours)
-                elif 'day' in date_str:
-                    days = int(re.search(r'\d+', date_str).group())
-                    return datetime.now() - timedelta(days=days)
-                elif 'minute' in date_str:
-                    return datetime.now()
-                else:
-                    return datetime.now() - timedelta(days=1)
-            elif 'just now' in date_str.lower() or 'latest' in date_str.lower():
-                return datetime.now()
-            else:
-                # Try parsing standard date formats
-                for fmt in ['%a, %d %b %Y %H:%M:%S %z', '%Y-%m-%d', '%d %b %Y']:
-                    try:
-                        return datetime.strptime(date_str, fmt)
-                    except:
-                        continue
-                # If all fails, assume recent
-                return datetime.now() - timedelta(hours=12)
-        except:
-            return datetime.now() - timedelta(hours=12)
-    
-    def is_within_timeframe(self, news_date, holding_term):
-        """Check if news is within acceptable timeframe for holding term"""
-        now = datetime.now()
-        
-        if holding_term == 'week':
-            max_age = timedelta(days=2)  # Last 2 days for weekly
-        elif holding_term == 'month':
-            max_age = timedelta(days=30)  # Last 30 days for monthly
-        else:  # long_term
-            max_age = timedelta(days=60)  # Last 60 days for long-term
-        
-        # If news_date is timezone-aware, make now timezone-aware too
-        if news_date.tzinfo is not None:
-            from datetime import timezone
-            now = now.replace(tzinfo=timezone.utc)
-        
-        age = now - news_date
-        return age <= max_age
-    
-    def scrape_moneycontrol_latest(self):
-        """Scrape latest news from Moneycontrol"""
-        try:
-            url = 'https://www.moneycontrol.com/news/business/markets/'
-            response = requests.get(url, headers=self.headers, timeout=10)
-            soup = BeautifulSoup(response.content, 'html.parser')
-            
-            headlines = []
-            news_items = soup.find_all('li', class_='clearfix')[:15]
-            
-            for item in news_items:
-                title_tag = item.find('h2') or item.find('a')
-                if title_tag:
-                    title = title_tag.get_text(strip=True)
-                    link = title_tag.find('a')['href'] if title_tag.find('a') else ''
-                    
-                    time_tag = item.find('span', class_='article_schedule')
-                    time_text = time_tag.get_text(strip=True) if time_tag else 'Just now'
-                    
-                    headlines.append({
-                        'title': title,
-                        'source': 'moneycontrol',
-                        'published': time_text,
-                        'published_date': self.parse_news_date(time_text),
-                        'link': link if link.startswith('http') else f'https://www.moneycontrol.com{link}'
-                    })
-            
-            return headlines
-        except Exception as e:
-            print(f"Could not scrape Moneycontrol: {e}")
-            return []
-    
-    def scrape_economic_times_latest(self):
-        """Scrape latest news from Economic Times"""
-        try:
-            url = 'https://economictimes.indiatimes.com/markets'
-            response = requests.get(url, headers=self.headers, timeout=10)
-            soup = BeautifulSoup(response.content, 'html.parser')
-            
-            headlines = []
-            news_items = soup.find_all('div', class_='eachStory')[:15]
-            
-            for item in news_items:
-                title_tag = item.find('h3') or item.find('a')
-                if title_tag:
-                    title = title_tag.get_text(strip=True)
-                    link_tag = item.find('a')
-                    link = link_tag['href'] if link_tag else ''
-                    
-                    time_tag = item.find('time') or item.find('span', class_='time')
-                    time_text = time_tag.get_text(strip=True) if time_tag else 'Recent'
-                    
-                    headlines.append({
-                        'title': title,
-                        'source': 'economic_times',
-                        'published': time_text,
-                        'published_date': self.parse_news_date(time_text),
-                        'link': link if link.startswith('http') else f'https://economictimes.indiatimes.com{link}'
-                    })
-            
-            return headlines
-        except Exception as e:
-            print(f"Could not scrape Economic Times: {e}")
-            return []
-    
-    def get_rss_feed_news(self):
-        """Get news from RSS feeds (fallback)"""
-        try:
-            all_headlines = []
-            
-            for source_name, rss_url in self.sources.items():
-                try:
-                    feed = feedparser.parse(rss_url)
-                    for entry in feed.entries[:10]:
-                        pub_date = self.parse_news_date(entry.get('published', ''))
-                        all_headlines.append({
-                            'title': entry.title,
-                            'source': source_name,
-                            'published': entry.get('published', 'N/A'),
-                            'published_date': pub_date,
-                            'link': entry.get('link', '')
-                        })
-                except Exception as e:
-                    continue
-            
-            return all_headlines
-        except Exception as e:
-            print(f"Error fetching RSS feeds: {e}")
-            return []
-    
-    def get_all_news(self, holding_term='week'):
-        """Get all news and filter by timeframe"""
-        all_headlines = []
-        
-        # Scrape real-time news
-        all_headlines.extend(self.scrape_moneycontrol_latest())
-        time.sleep(1)
-        all_headlines.extend(self.scrape_economic_times_latest())
-        
-        # Fallback to RSS
-        if len(all_headlines) < 10:
-            all_headlines.extend(self.get_rss_feed_news())
-        
-        # Filter by timeframe
-        filtered = [h for h in all_headlines if self.is_within_timeframe(h['published_date'], holding_term)]
-        
-        # Remove duplicates
-        seen = set()
-        unique = []
-        for h in filtered:
-            if h['title'] not in seen:
-                seen.add(h['title'])
-                unique.append(h)
-        
-        return unique
-    
-    def get_stock_specific_news(self, symbol, company_name, holding_term='week'):
+    def fetch_stock_news(self, symbol, company_name=None, sector=None, timeframe='week'):
         """
-        Get news with priority: Stock-specific → Peer → Sector → Global
+        Fetch news specific to a stock with fallback hierarchy
         
         Args:
-            symbol: Stock symbol (e.g., 'IOC', 'RELIANCE')
-            company_name: Full company name
-            holding_term: 'week', 'month', or 'long_term'
-        """
-        print(f"\n🔍 Searching news for {symbol} ({holding_term})...")
+            symbol (str): Stock ticker symbol (e.g., 'RELIANCE', 'TCS')
+            company_name (str): Full company name (e.g., 'Reliance Industries')
+            sector (str): Company sector (e.g., 'Energy', 'Technology')
+            timeframe (str): 'week', 'month', or 'long'
         
-        all_news = self.get_all_news(holding_term)
+        Returns:
+            list: News articles with titles, links, dates, and relevance
+        """
+        print(f"\n📰 Fetching news for {symbol}...")
+        
+        all_news = []
         
         # Priority 1: Stock-specific news
-        stock_specific = []
-        company_variations = [
-            symbol.upper(),
-            company_name.lower() if company_name else '',
-            company_name.split()[0].lower() if company_name else ''
+        stock_news = self._fetch_stock_specific_news(symbol, company_name)
+        if stock_news:
+            print(f"✓ Found {len(stock_news)} stock-specific articles")
+            all_news.extend(stock_news)
+        
+        # Priority 2: Sector news (if not enough stock news)
+        if len(all_news) < 5 and sector and sector != 'Unknown':
+            sector_news = self._fetch_sector_news(sector)
+            if sector_news:
+                print(f"✓ Found {len(sector_news)} sector-related articles")
+                all_news.extend(sector_news)
+        
+        # Priority 3: General market news (fallback)
+        if len(all_news) < 3:
+            market_news = self._fetch_general_market_news()
+            if market_news:
+                print(f"✓ Found {len(market_news)} general market articles")
+                all_news.extend(market_news)
+        
+        # Filter by timeframe
+        filtered_news = self._filter_by_timeframe(all_news, timeframe)
+        
+        # Remove duplicates
+        unique_news = self._remove_duplicates(filtered_news)
+        
+        print(f"📊 Total relevant news: {len(unique_news)}")
+        return unique_news[:10]  # Return top 10
+    
+    def _fetch_stock_specific_news(self, symbol, company_name=None):
+        """Fetch news specifically about this stock"""
+        news = []
+        
+        # Try multiple sources
+        sources = [
+            self._search_moneycontrol,
+            self._search_economic_times,
+            self._search_livemint,
+            self._search_business_standard
         ]
         
-        for news in all_news:
-            title_lower = news['title'].lower()
-            # Exact match for symbol (case-insensitive, whole word)
-            if re.search(r'\b' + re.escape(symbol.lower()) + r'\b', title_lower):
-                stock_specific.append({**news, 'priority': 'Stock-Specific'})
-            # Company name match
-            elif company_name and any(var in title_lower for var in company_variations if var):
-                stock_specific.append({**news, 'priority': 'Stock-Specific'})
+        for source_func in sources:
+            try:
+                source_news = source_func(symbol, company_name)
+                if source_news:
+                    news.extend(source_news)
+            except Exception as e:
+                print(f"⚠️ {source_func.__name__} failed: {e}")
+                continue
         
-        print(f"  ✓ Found {len(stock_specific)} stock-specific news")
-        
-        # Priority 2: Peer news (if stock-specific < 3)
-        peer_news = []
-        if len(stock_specific) < 3:
-            peers = self.peer_mapping.get(symbol, [])
-            for news in all_news:
-                if news not in stock_specific:
-                    title_lower = news['title'].lower()
-                    if any(peer.lower() in title_lower for peer in peers):
-                        peer_news.append({**news, 'priority': 'Peer'})
-            
-            print(f"  ✓ Found {len(peer_news)} peer company news")
-        
-        # Priority 3: Sector news (if total < 5)
-        sector_news = []
-        if len(stock_specific) + len(peer_news) < 5:
-            # Determine sector (you'll need to pass this or detect it)
-            sector_keywords = self.get_sector_keywords_for_symbol(symbol)
-            for news in all_news:
-                if news not in stock_specific and news not in peer_news:
-                    title_lower = news['title'].lower()
-                    if any(keyword.lower() in title_lower for keyword in sector_keywords):
-                        sector_news.append({**news, 'priority': 'Sector'})
-            
-            print(f"  ✓ Found {len(sector_news)} sector news")
-        
-        # Priority 4: Global news (always include top 2-3)
-        global_news = []
-        for news in all_news:
-            if news not in stock_specific and news not in peer_news and news not in sector_news:
-                title_lower = news['title'].lower()
-                if any(keyword.lower() in title_lower for keyword in self.global_keywords):
-                    global_news.append({**news, 'priority': 'Global'})
-        
-        print(f"  ✓ Found {len(global_news)} global market news")
-        
-        # Combine with priority
-        result = (
-            stock_specific[:5] +  # Max 5 stock-specific
-            peer_news[:3] +       # Max 3 peer
-            sector_news[:3] +     # Max 3 sector
-            global_news[:2]       # Always 2 global
-        )
-        
-        print(f"  📰 Total relevant news: {len(result)}\n")
-        
-        return result[:10]  # Return max 10 total
+        return news
     
-    def get_sector_keywords_for_symbol(self, symbol):
-        """Get sector keywords for a symbol"""
-        # This is a simplified mapping - you can enhance it
-        sector_map = {
-            'IOC': ['oil', 'petroleum', 'energy', 'fuel'],
-            'BPCL': ['oil', 'petroleum', 'energy', 'fuel'],
-            'HPCL': ['oil', 'petroleum', 'energy', 'fuel'],
-            'RELIANCE': ['oil', 'petrochemical', 'energy', 'telecom'],
-            'TCS': ['IT', 'tech', 'software', 'digital'],
-            'INFY': ['IT', 'tech', 'software', 'digital'],
-            'WIPRO': ['IT', 'tech', 'software', 'digital'],
-            'HDFCBANK': ['bank', 'finance', 'lending', 'NBFC'],
-            'ICICIBANK': ['bank', 'finance', 'lending', 'NBFC'],
-            'TATAMOTORS': ['auto', 'automobile', 'car', 'EV'],
-            'MARUTI': ['auto', 'automobile', 'car'],
+    def _search_moneycontrol(self, symbol, company_name=None):
+        """Search Moneycontrol for stock-specific news"""
+        try:
+            # Use company name if available, otherwise symbol
+            search_term = company_name if company_name else symbol
+            search_term = search_term.replace(' ', '+')
+            
+            url = f'https://www.moneycontrol.com/news/news-all/{search_term}'
+            
+            response = requests.get(url, headers=self.headers, timeout=5, verify=False)
+            if response.status_code != 200:
+                return []
+            
+            soup = BeautifulSoup(response.content, 'html.parser')
+            news_items = []
+            
+            # Find news articles
+            articles = soup.find_all('li', class_='clearfix')
+            
+            for article in articles[:5]:
+                try:
+                    title_tag = article.find('h2') or article.find('a')
+                    if not title_tag:
+                        continue
+                    
+                    title = title_tag.get_text(strip=True)
+                    link = title_tag.find('a')['href'] if title_tag.find('a') else title_tag.get('href', '')
+                    
+                    # Check if article is relevant to the stock
+                    if self._is_relevant(title, symbol, company_name):
+                        news_items.append({
+                            'title': title,
+                            'link': link,
+                            'source': 'Moneycontrol',
+                            'date': datetime.now(),
+                            'relevance': 'stock-specific'
+                        })
+                except:
+                    continue
+            
+            return news_items
+            
+        except Exception as e:
+            print(f"Moneycontrol search error: {e}")
+            return []
+    
+    def _search_economic_times(self, symbol, company_name=None):
+        """Search Economic Times for stock-specific news"""
+        try:
+            search_term = company_name if company_name else symbol
+            search_term = search_term.replace(' ', '+')
+            
+            url = f'https://economictimes.indiatimes.com/topic/{search_term}'
+            
+            response = requests.get(url, headers=self.headers, timeout=5, verify=False)
+            if response.status_code != 200:
+                return []
+            
+            soup = BeautifulSoup(response.content, 'html.parser')
+            news_items = []
+            
+            # Find news articles
+            articles = soup.find_all('div', class_='eachStory')
+            
+            for article in articles[:5]:
+                try:
+                    title_tag = article.find('h3') or article.find('a')
+                    if not title_tag:
+                        continue
+                    
+                    title = title_tag.get_text(strip=True)
+                    link_tag = article.find('a')
+                    link = link_tag['href'] if link_tag else ''
+                    
+                    if not link.startswith('http'):
+                        link = 'https://economictimes.indiatimes.com' + link
+                    
+                    if self._is_relevant(title, symbol, company_name):
+                        news_items.append({
+                            'title': title,
+                            'link': link,
+                            'source': 'Economic Times',
+                            'date': datetime.now(),
+                            'relevance': 'stock-specific'
+                        })
+                except:
+                    continue
+            
+            return news_items
+            
+        except Exception as e:
+            print(f"Economic Times search error: {e}")
+            return []
+    
+    def _search_livemint(self, symbol, company_name=None):
+        """Search LiveMint for stock-specific news"""
+        try:
+            search_term = company_name if company_name else symbol
+            
+            # LiveMint RSS feed for companies
+            url = f'https://www.livemint.com/rss/companies'
+            
+            feed = feedparser.parse(url)
+            news_items = []
+            
+            for entry in feed.entries[:10]:
+                try:
+                    title = entry.title
+                    link = entry.link
+                    
+                    # Check relevance
+                    if self._is_relevant(title, symbol, company_name):
+                        pub_date = entry.get('published_parsed', None)
+                        if pub_date:
+                            pub_date = datetime(*pub_date[:6])
+                        else:
+                            pub_date = datetime.now()
+                        
+                        news_items.append({
+                            'title': title,
+                            'link': link,
+                            'source': 'LiveMint',
+                            'date': pub_date,
+                            'relevance': 'stock-specific'
+                        })
+                except:
+                    continue
+            
+            return news_items
+            
+        except Exception as e:
+            print(f"LiveMint search error: {e}")
+            return []
+    
+    def _search_business_standard(self, symbol, company_name=None):
+        """Search Business Standard for stock-specific news"""
+        try:
+            search_term = company_name if company_name else symbol
+            search_term = search_term.replace(' ', '-').lower()
+            
+            url = f'https://www.business-standard.com/topic/{search_term}'
+            
+            response = requests.get(url, headers=self.headers, timeout=5, verify=False)
+            if response.status_code != 200:
+                return []
+            
+            soup = BeautifulSoup(response.content, 'html.parser')
+            news_items = []
+            
+            articles = soup.find_all('div', class_='listing-txt')
+            
+            for article in articles[:5]:
+                try:
+                    title_tag = article.find('a')
+                    if not title_tag:
+                        continue
+                    
+                    title = title_tag.get_text(strip=True)
+                    link = title_tag['href']
+                    
+                    if not link.startswith('http'):
+                        link = 'https://www.business-standard.com' + link
+                    
+                    if self._is_relevant(title, symbol, company_name):
+                        news_items.append({
+                            'title': title,
+                            'link': link,
+                            'source': 'Business Standard',
+                            'date': datetime.now(),
+                            'relevance': 'stock-specific'
+                        })
+                except:
+                    continue
+            
+            return news_items
+            
+        except Exception as e:
+            print(f"Business Standard search error: {e}")
+            return []
+    
+    def _fetch_sector_news(self, sector):
+        """Fetch news about the sector/industry"""
+        try:
+            sector_keywords = {
+                'Technology': ['IT', 'software', 'technology', 'tech'],
+                'Financial Services': ['banking', 'finance', 'NBFC', 'insurance'],
+                'Energy': ['oil', 'gas', 'energy', 'petroleum', 'power'],
+                'Healthcare': ['pharma', 'healthcare', 'medical', 'drugs'],
+                'Consumer': ['FMCG', 'consumer', 'retail'],
+                'Automobile': ['auto', 'automobile', 'cars', 'vehicles'],
+                'Telecom': ['telecom', 'telecommunications', '5G', 'spectrum']
+            }
+            
+            keywords = sector_keywords.get(sector, [sector.lower()])
+            news_items = []
+            
+            # Search Moneycontrol sector news
+            for keyword in keywords[:2]:
+                try:
+                    url = f'https://www.moneycontrol.com/news/business/stocks/'
+                    response = requests.get(url, headers=self.headers, timeout=5, verify=False)
+                    
+                    if response.status_code == 200:
+                        soup = BeautifulSoup(response.content, 'html.parser')
+                        articles = soup.find_all('li', class_='clearfix')[:5]
+                        
+                        for article in articles:
+                            try:
+                                title_tag = article.find('h2') or article.find('a')
+                                if title_tag and keyword.lower() in title_tag.get_text().lower():
+                                    title = title_tag.get_text(strip=True)
+                                    link = title_tag.find('a')['href'] if title_tag.find('a') else ''
+                                    
+                                    news_items.append({
+                                        'title': title,
+                                        'link': link,
+                                        'source': 'Moneycontrol',
+                                        'date': datetime.now(),
+                                        'relevance': 'sector'
+                                    })
+                            except:
+                                continue
+                except:
+                    continue
+            
+            return news_items[:5]
+            
+        except Exception as e:
+            print(f"Sector news error: {e}")
+            return []
+    
+    def _fetch_general_market_news(self):
+        """Fetch general market news (fallback)"""
+        try:
+            url = 'https://www.moneycontrol.com/rss/MCtopnews.xml'
+            feed = feedparser.parse(url)
+            
+            news_items = []
+            for entry in feed.entries[:5]:
+                try:
+                    news_items.append({
+                        'title': entry.title,
+                        'link': entry.link,
+                        'source': 'Moneycontrol',
+                        'date': datetime.now(),
+                        'relevance': 'general'
+                    })
+                except:
+                    continue
+            
+            return news_items
+            
+        except Exception as e:
+            print(f"General news error: {e}")
+            return []
+    
+    def _is_relevant(self, title, symbol, company_name=None):
+        """Check if news title is relevant to the stock"""
+        title_lower = title.lower()
+        
+        # Check for symbol
+        if symbol.lower() in title_lower:
+            return True
+        
+        # Check for company name
+        if company_name:
+            company_words = company_name.lower().split()
+            # Check if at least 2 words from company name appear
+            matches = sum(1 for word in company_words if len(word) > 3 and word in title_lower)
+            if matches >= 2 or (len(company_words) == 1 and company_words[0] in title_lower):
+                return True
+        
+        return False
+    
+    def _filter_by_timeframe(self, news_list, timeframe):
+        """Filter news by timeframe"""
+        if timeframe == 'week':
+            cutoff = datetime.now() - timedelta(days=7)
+        elif timeframe == 'month':
+            cutoff = datetime.now() - timedelta(days=30)
+        else:  # long-term
+            cutoff = datetime.now() - timedelta(days=60)
+        
+        filtered = []
+        for article in news_list:
+            if article.get('date'):
+                if article['date'] >= cutoff:
+                    filtered.append(article)
+            else:
+                # Include if no date (assume recent)
+                filtered.append(article)
+        
+        return filtered
+    
+    def _remove_duplicates(self, news_list):
+        """Remove duplicate news articles"""
+        seen_titles = set()
+        unique_news = []
+        
+        for article in news_list:
+            title_normalized = article['title'].lower().strip()
+            if title_normalized not in seen_titles:
+                seen_titles.add(title_normalized)
+                unique_news.append(article)
+        
+        return unique_news
+    
+    def get_news_summary(self, news_list):
+        """Get a summary of news sentiment and key themes"""
+        if not news_list:
+            return {
+                'total_articles': 0,
+                'stock_specific': 0,
+                'sector_related': 0,
+                'general_market': 0,
+                'sources': []
+            }
+        
+        summary = {
+            'total_articles': len(news_list),
+            'stock_specific': len([n for n in news_list if n.get('relevance') == 'stock-specific']),
+            'sector_related': len([n for n in news_list if n.get('relevance') == 'sector']),
+            'general_market': len([n for n in news_list if n.get('relevance') == 'general']),
+            'sources': list(set([n.get('source', 'Unknown') for n in news_list]))
         }
         
-        return sector_map.get(symbol, ['market', 'stock'])
-    
-    def get_market_sentiment(self, holding_term='week'):
-        """Get overall Indian market sentiment from latest news"""
-        try:
-            all_headlines = self.get_all_news(holding_term)
-            
-            if not all_headlines:
-                return {
-                    'sentiment': 'neutral',
-                    'headlines': [],
-                    'score': 0,
-                    'positive_count': 0,
-                    'negative_count': 0
-                }
-            
-            # Sentiment analysis
-            positive_keywords = ['surge', 'rally', 'gain', 'jump', 'rise', 'high', 'bullish', 
-                               'growth', 'profit', 'strong', 'up', 'boost', 'record', 'soar',
-                               'advance', 'climb', 'positive', 'upbeat', 'optimistic']
-            negative_keywords = ['fall', 'drop', 'crash', 'loss', 'decline', 'down', 'weak',
-                               'bearish', 'slump', 'plunge', 'concern', 'warning', 'risk',
-                               'tumble', 'slide', 'dip', 'negative', 'worry', 'fear']
-            
-            positive_count = 0
-            negative_count = 0
-            
-            for headline in all_headlines:
-                title_lower = headline['title'].lower()
-                if any(word in title_lower for word in positive_keywords):
-                    positive_count += 1
-                if any(word in title_lower for word in negative_keywords):
-                    negative_count += 1
-            
-            total = positive_count + negative_count
-            if total == 0:
-                sentiment = 'neutral'
-                score = 0
-            else:
-                sentiment_score = (positive_count - negative_count) / total
-                if sentiment_score > 0.2:
-                    sentiment = 'bullish'
-                    score = sentiment_score
-                elif sentiment_score < -0.2:
-                    sentiment = 'bearish'
-                    score = sentiment_score
-                else:
-                    sentiment = 'neutral'
-                    score = sentiment_score
-            
-            return {
-                'sentiment': sentiment,
-                'score': score,
-                'headlines': all_headlines[:20],
-                'positive_count': positive_count,
-                'negative_count': negative_count
-            }
-        
-        except Exception as e:
-            print(f"Error fetching market sentiment: {e}")
-            return {
-                'sentiment': 'neutral',
-                'headlines': [],
-                'score': 0,
-                'positive_count': 0,
-                'negative_count': 0
-            }
-    
-    def get_sectoral_news(self, sector, holding_term='week'):
-        """Get news specific to a sector"""
-        try:
-            keywords = self.sector_keywords.get(sector, [sector.lower()])
-            all_news = self.get_all_news(holding_term)
-            
-            relevant_headlines = []
-            
-            for headline in all_news:
-                title_lower = headline['title'].lower()
-                if any(keyword.lower() in title_lower for keyword in keywords):
-                    relevant_headlines.append(headline)
-            
-            if not relevant_headlines:
-                return {'sentiment': 'neutral', 'headlines': []}
-            
-            # Analyze sentiment
-            positive_keywords = ['surge', 'rally', 'gain', 'jump', 'rise', 'bullish', 'growth', 'strong', 'boost']
-            negative_keywords = ['fall', 'drop', 'crash', 'loss', 'decline', 'bearish', 'slump', 'weak', 'concern']
-            
-            positive = sum(1 for h in relevant_headlines 
-                          if any(word in h['title'].lower() for word in positive_keywords))
-            negative = sum(1 for h in relevant_headlines 
-                          if any(word in h['title'].lower() for word in negative_keywords))
-            
-            total = positive + negative
-            if total == 0:
-                sentiment = 'neutral'
-            elif positive > negative:
-                sentiment = 'bullish'
-            else:
-                sentiment = 'bearish'
-            
-            return {
-                'sentiment': sentiment,
-                'headlines': relevant_headlines[:10],
-                'positive': positive,
-                'negative': negative
-            }
-        
-        except Exception as e:
-            print(f"Error fetching sectoral news: {e}")
-            return {'sentiment': 'neutral', 'headlines': []}
+        return summary

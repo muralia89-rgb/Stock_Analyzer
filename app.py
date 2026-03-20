@@ -480,6 +480,77 @@ with main_tab2:
                 st.caption(f"Source: {headline['source']} | {headline['published']}")
         
         st.markdown("---")
+        st.subheader("📰 Recent News & Sentiment")
+            
+            if 'news' in results and results['news']['articles']:
+                news_summary = results['news']['summary']
+                
+                # Show news summary metrics
+                col1, col2, col3, col4 = st.columns(4)
+                col1.metric("Total Articles", news_summary.get('total_articles', 0))
+                col2.metric("Stock-Specific", news_summary.get('stock_specific', 0), 
+                           help="News specifically about this company")
+                col3.metric("Sector-Related", news_summary.get('sector_related', 0),
+                           help="News about the industry/sector")
+                col4.metric("General Market", news_summary.get('general_market', 0),
+                           help="Broader market news")
+                
+                st.write("")  # Spacing
+                
+                # Display articles with relevance badges
+                articles = results['news']['articles'][:10]  # Show top 10
+                
+                for idx, article in enumerate(articles, 1):
+                    relevance = article.get('relevance', 'general')
+                    source = article.get('source', 'Unknown')
+                    title = article.get('title', 'No title')
+                    link = article.get('link', '#')
+                    date = article.get('date')
+                    
+                    # Create relevance badge with color
+                    if relevance == 'stock-specific':
+                        badge_emoji = "🎯"
+                        badge_text = "STOCK-SPECIFIC"
+                        badge_color = "#28a745"  # Green
+                    elif relevance == 'sector':
+                        badge_emoji = "📊"
+                        badge_text = "SECTOR-RELATED"
+                        badge_color = "#ffc107"  # Yellow
+                    else:
+                        badge_emoji = "📈"
+                        badge_text = "MARKET NEWS"
+                        badge_color = "#6c757d"  # Gray
+                    
+                    # Display article with styled badge
+                    col1, col2 = st.columns([1, 5])
+                    
+                    with col1:
+                        st.markdown(f"**{badge_emoji}**")
+                    
+                    with col2:
+                        st.markdown(
+                            f'<span style="background-color: {badge_color}; color: white; padding: 2px 6px; '
+                            f'border-radius: 3px; font-size: 10px; font-weight: bold;">{badge_text}</span> '
+                            f'<span style="color: #666; font-size: 12px;">| {source}</span>',
+                            unsafe_allow_html=True
+                        )
+                        st.markdown(f"**[{title}]({link})**")
+                        
+                        if date:
+                            try:
+                                date_str = date.strftime('%B %d, %Y at %I:%M %p')
+                                st.caption(f"📅 {date_str}")
+                            except:
+                                pass
+                    
+                    if idx < len(articles):  # Add divider except after last item
+                        st.write("")
+            
+            else:
+                st.info("📰 No recent news found for this stock. This could mean:")
+                st.write("- The stock is less covered by financial media")
+                st.write("- No significant news in the selected timeframe")
+                st.write("- News sources are temporarily unavailable")
 
         # Strong Buy Recommendations
         st.subheader("🌟 STRONG BUY Recommendations")
