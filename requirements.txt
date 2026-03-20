@@ -18,4 +18,4 @@ protobuf
 html5lib
 newsapi-python
 textblob
-altair
+altair>=5.0.0
