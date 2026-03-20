@@ -123,20 +123,31 @@ with main_tab1:
             if not symbol:
                 st.error("⚠️ Please select a stock symbol")
             else:
-                with st.spinner(f"Analyzing {symbol}... This may take 1-2 minutes for ML training..."):
-                    try:
+                try: 
+                    with st.spinner(f"Analyzing {symbol}... This may take 1-2 minutes for ML training..."):
+                        st.write(f"DEBUG: Starting analysis for {symbol}")
                         analyzer = StockAnalyzer(symbol, holding_term, exchange_code)
+                        st.write("DEBUG: Fetching data...")
                         results = analyzer.analyze()
-                        
-                        st.session_state.analysis_results = results
-                        st.session_state.analyzer = analyzer
-                        st.session_state.current_symbol = symbol
-                        st.session_state.current_holding_term = holding_term
+
+                        st.write("DEBUG: Analysis complete!")
+
+                        if results:                      
+                            st.session_state.analysis_results = results
+                            st.session_state.analyzer = analyzer
+                            st.session_state.current_symbol = symbol
+                            st.session_state.current_holding_term = holding_term
+                        else:
+                            st.error("❌ Analysis returned no results")
                         
                     except Exception as e:
                         st.error(f"❌ Error: {str(e)}")
-                        st.info("Please check that the stock symbol is valid and try again.")
-                        st.session_state.analysis_results = None
+                        st.error(f"❌ Error during analysis: {str(e)}")
+                        st.error(f"Error type: {type(e).__name__}")
+            
+                        # Show full traceback for debugging
+                        import traceback
+                        st.code(traceback.format_exc())
         
         results = st.session_state.analysis_results
         analyzer = st.session_state.analyzer
